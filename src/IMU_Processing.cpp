@@ -1,17 +1,19 @@
-#include"IMU_Processing.h"
+#include "IMU_Processing.h"
 
 const bool time_list(PointType &x, PointType &y)
 {
-  return (x.curvature < y.curvature);
+  return (x.curvature < y.curvature); 
+  // get a sorting function for curvature calculation for further feature extraction
 }
 
-ImuProcess::ImuProcess()
+ImuProcess::ImuProcess() //  constructor of an Imu data stream
     : b_first_frame_(true), imu_need_init_(true), start_timestamp_(-1)
 {
   init_iter_num = 1;
   #ifdef USE_IKFOM
-  Q = process_noise_cov();
+  Q = process_noise_cov(); // if use Iterated Kalman Filter OM, then define Q to be noise manifold
   #endif
+  // initialize the covariance matrix of accuracy & gyr
   cov_acc       = V3D(0.1, 0.1, 0.1);
   cov_gyr       = V3D(0.1, 0.1, 0.1);
   cov_acc_scale = V3D(1, 1, 1);
@@ -20,12 +22,18 @@ ImuProcess::ImuProcess()
   cov_bias_acc  = V3D(0.1, 0.1, 0.1);
   mean_acc      = V3D(0, 0, -1.0);
   mean_gyr      = V3D(0, 0, 0);
+  // initialize angvel_last to be zero matrix
   angvel_last       = Zero3d;
+  // initialize the offset of lidar to imu as zero
   Lid_offset_to_IMU = Zero3d;
+  // initialize the rotation of lidar to imu as eye matrix -> ones on the diagnal & zeros elsewhere
   Lid_rot_to_IMU    = Eye3d;
+  // initialize the last_imu_ to be a ROS Imu with 0 speed and 0 acceleration.
+  // with orientation_covariance & angular_velocity_covariance & linear_acceleration_covariance assigned as 0
   last_imu_.reset(new sensor_msgs::Imu());
 }
 
+// destructor
 ImuProcess::~ImuProcess() {}
 
 void ImuProcess::Reset() 

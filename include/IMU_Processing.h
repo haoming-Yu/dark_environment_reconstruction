@@ -27,7 +27,7 @@
 #include <fast_livo/States.h>
 #include <geometry_msgs/Vector3.h>
 
-#ifdef USE_IKFOM
+#ifdef USE_IKFOM // whether to use IKFOM to optimize the IMU measurement
 #include "use-ikfom.hpp"
 #endif
 
@@ -38,7 +38,7 @@
 const bool time_list(PointType &x, PointType &y); //{return (x.curvature < y.curvature);};
 
 /// *************IMU Process and undistortion
-class ImuProcess
+class ImuProcess // functions and methods to process IMU stream
 {
  public:
   EIGEN_MAKE_ALIGNED_OPERATOR_NEW

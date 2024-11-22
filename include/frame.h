@@ -15,23 +15,23 @@
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 #ifndef SVO_FRAME_H_
-#define SVO_FRAME_H_
+#define SVO_FRAME_H_ // this is inherited from SVO work
 
 #include <common_lib.h>
 #include <vikit/math_utils.h>
 #include <vikit/abstract_camera.h>
 #include <boost/noncopyable.hpp>
 
-namespace lidar_selection {
+namespace lidar_selection { // this is a lidar selection part used to record lidar related information
 
-struct Feature;
-typedef std::shared_ptr<Feature>  FeaturePtr;
+struct Feature; // a declaration of feature structure
+typedef std::shared_ptr<Feature>  FeaturePtr; // create a feature pointer using shared_ptr smart pointer
 
-class Point;
-typedef std::shared_ptr<Point> PointPtr;
+class Point; // a declaration of point class
+typedef std::shared_ptr<Point> PointPtr; // create a point class pointer using smart ptr shared_ptr
 
-typedef list<FeaturePtr> Features;
-typedef vector<cv::Mat> ImgPyr;
+typedef list<FeaturePtr> Features; // a list of feature pointer
+typedef vector<cv::Mat> ImgPyr; // a vector of image, organized as a image pyramid
 
 /// A frame saves the image, the associated features and the estimated pose.
 class Frame : boost::noncopyable
@@ -43,14 +43,14 @@ public:
   int                           id_;                    //!< Unique id of the frame.
   // double                        timestamp_;             //!< Timestamp of when the image was recorded.
   vk::AbstractCamera*           cam_;                   //!< Camera model.
-  SE3                           T_f_w_;                 //!< Transform (f)rame from (w)orld.
+  SE3                           T_f_w_;                 //!< Transform (f)rame from (w)orld. (world to frame)
   Matrix<double, 6, 6>          Cov_;                   //!< Covariance.
   ImgPyr                        img_pyr_;               //!< Image Pyramid.
   Features                      fts_;                   //!< List of features in the image.
-  vector<FeaturePtr>              key_pts_;               //!< Five features and associated 3D points which are used to detect if two frames have overlapping field of view.
+  vector<FeaturePtr>            key_pts_;               //!< Five features and associated 3D points which are used to detect if two frames have overlapping field of view.
   bool                          is_keyframe_;           //!< Was this frames selected as keyframe
 
-  Frame(vk::AbstractCamera* cam, const cv::Mat& img);
+  Frame(vk::AbstractCamera* cam, const cv::Mat& img); // constructor, use a camera and an image to initialize a frame.
   ~Frame();
 
   /// Initialize new frame and create image pyramid.
@@ -80,10 +80,15 @@ public:
   bool isVisible(const Vector3d& xyz_w) const;
 
   /// Full resolution image stored in the frame.
-  inline const cv::Mat& img() const { return img_pyr_[0]; }
+  inline const cv::Mat& img() const { return img_pyr_[0]; } // get full resolution image
 
   /// Was this frame selected as keyframe?
-  inline bool isKeyframe() const { return is_keyframe_; }
+  inline bool isKeyframe() const { return is_keyframe_; } // get keyframe information
+
+  // a series of camera space(pixel space in this context, c in short), 
+  // camera-frame unit sphere space(f in short),
+  // and world-frame space(w in short) transformation
+  // the implementation is developed by vikit library
 
   /// Transforms point coordinates in world-frame (w) to camera pixel coordinates (c).
   inline Vector2d w2c(const Vector3d& xyz_w) const { return cam_->world2cam( T_f_w_ * xyz_w ); }
@@ -94,7 +99,7 @@ public:
   /// Transforms pixel coordinates (c) to frame unit sphere coordinates (f).
   inline Vector3d c2f(const double x, const double y) const { return cam_->cam2world(x, y); }
 
-  /// Transforms point coordinates in world-frame (w) to camera-frams (f).
+  /// Transforms point coordinates in world-frame (w) to camera-frame (f).
   inline Vector3d w2f(const Vector3d& xyz_w) const { return T_f_w_ * xyz_w; }
 
   /// Transforms point from frame unit sphere (f) frame to world coordinate frame (w).
@@ -103,18 +108,20 @@ public:
   /// Projects Point from unit sphere (f) in camera pixels (c).
   inline Vector2d f2c(const Vector3d& f) const { return cam_->world2cam( f ); }
 
+  // the position of camera frame.
   /// Return the pose of the frame in the (w)orld coordinate frame.
   inline Vector3d pos() const { return T_f_w_.inverse().translation(); }
 
+  // projection jacobian matrix from xyz(f) to uv, change function calculate the transformation of world frame coordinate as well.
   /// Frame jacobian for projection of 3D point in (f)rame coordinate to
   /// unit plane coordinates uv (focal length = 1).
   inline static void jacobian_xyz2uv_change(
-      const Vector3d& xyz_in_world,
-      const Vector3d& xyz_in_f,
-      Matrix<double,2,6>& J,
-      SE3& Tbc,
-      SE3& T_ref_w,
-      double fx)
+      const Vector3d& xyz_in_world, // xyz(w) is needed for Jacobian matrix construction
+      const Vector3d& xyz_in_f, // xyz(f) is needed as the projection input
+      Matrix<double,2,6>& J, // output, the jacobian matrix we need
+      SE3& Tbc, // no need anymore, deprecated.
+      SE3& T_ref_w, // input, the translation of w and f
+      double fx) // fx parameter for jacobian calculation and projection
   {
     //Vector3d xyz_in_imu = Tbc * xyz_in_world;
     //Vector3d xyz_in_imu = xyz_in_world;
@@ -164,6 +171,7 @@ public:
     J = J1 * T_ref_w.rotation_matrix() * J2;// * J2;   
   }
 
+  // just calculate the xyz(f) to uv projection's jacobian matrix.
   inline static void jacobian_xyz2uv(
     const Vector3d& xyz_in_f,
     Matrix<double,2,6>& J)
@@ -189,9 +197,10 @@ public:
   }
 };
 
-typedef std::shared_ptr<Frame> FramePtr;
+typedef std::shared_ptr<Frame> FramePtr; // name the pointer to the Frame class as FramePtr with smart pointer
 
 /// Some helper functions for the frame object.
+// create a namespace inside lidar_selection namespace to collect the utility information
 namespace frame_utils {
 
 /// Creates an image pyramid of half-sampled images.

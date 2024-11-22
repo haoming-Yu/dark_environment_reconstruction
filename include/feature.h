@@ -27,16 +27,16 @@ namespace lidar_selection {
 struct Feature
 {
   EIGEN_MAKE_ALIGNED_OPERATOR_NEW
-
+  // select feature type as corner or edgelet for visual odometry
   enum FeatureType {
     CORNER,
     EDGELET
   };
-  int id_;
+  int id_; // feature identification
   FeatureType type;     //!< Type can be corner or edgelet.
   Frame* frame;         //!< Pointer to frame in which the feature was detected.
-  cv::Mat img;
-  vector<cv::Mat> ImgPyr;
+  cv::Mat img; // feature's corresponding image
+  vector<cv::Mat> ImgPyr; // ImgPyr as a image pyramid for corresponding feature
   Vector2d px;          //!< Coordinates in pixels on pyramid level 0.
   Vector3d f;           //!< Unit-bearing vector of the feature.
   int level;            //!< Image pyramid level where feature was extracted.
@@ -45,8 +45,9 @@ struct Feature
   float score;
   float error;
   // Vector2d grad_cur_;   //!< edgelete grad direction in cur frame 
-  SE3 T_f_w_;
+  SE3 T_f_w_; // translation matrix(world to frame)
   // float* patch;
+  // constructor, initialize core variants.
   Feature(const Vector2d& _px, const Vector3d& _f, const SE3& _T_f_w, const float &_score, int _level) :
     type(CORNER),
     px(_px),
@@ -55,6 +56,7 @@ struct Feature
     level(_level),
     score(_score)
   {}
+  // return frame-to-world matrix's position
   inline Vector3d pos() const { return T_f_w_.inverse().translation(); }
   ~Feature()
   {
