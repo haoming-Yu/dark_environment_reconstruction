@@ -293,6 +293,7 @@ namespace lidar_selection
 }
 typedef boost::shared_ptr<SparseMap> SparseMapPtr;
 
+// this class is used to create a state management class for all system states.
 struct StatesGroup
 {
     StatesGroup() {
@@ -392,6 +393,7 @@ T deg2rad(T degrees)
   return degrees * PI_M / 180.0;
 }
 
+// do the deep copy of the pose information.
 template<typename T>
 auto set_pose6d(const double t, const Matrix<T, 3, 1> &a, const Matrix<T, 3, 1> &g, \
                 const Matrix<T, 3, 1> &v, const Matrix<T, 3, 1> &p, const Matrix<T, 3, 3> &R)

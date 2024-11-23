@@ -36,21 +36,23 @@ ImuProcess::ImuProcess() //  constructor of an Imu data stream
 // destructor
 ImuProcess::~ImuProcess() {}
 
-void ImuProcess::Reset() 
+void ImuProcess::Reset() // reset imu stream processing
 {
-  ROS_WARN("Reset ImuProcess");
-  mean_acc      = V3D(0, 0, -1.0);
-  mean_gyr      = V3D(0, 0, 0);
-  angvel_last       = Zero3d;
-  imu_need_init_    = true;
-  start_timestamp_  = -1;
-  init_iter_num     = 1;
-  v_imu_.clear();
-  IMUpose.clear();
-  last_imu_.reset(new sensor_msgs::Imu());
-  cur_pcl_un_.reset(new PointCloudXYZI());
+  ROS_WARN("Reset ImuProcess"); // give yellow output
+  mean_acc      = V3D(0, 0, -1.0); // reset mean accuracy to be (0, 0, -1)
+  mean_gyr      = V3D(0, 0, 0); // reset mean gyr to be (0, 0, 0)
+  angvel_last       = Zero3d; // reset angvel_last to be zero matrix
+  imu_need_init_    = true; // because the reset, we need to reset imu_need_init_ to be true again
+  start_timestamp_  = -1; // set to invalid timestamp for re-initialization
+  init_iter_num     = 1; // first initialization, reset former init iteration number
+  v_imu_.clear(); // clear away all the v_imu_ deque storage
+  IMUpose.clear(); // IMU pose vector cleared away as well
+  last_imu_.reset(new sensor_msgs::Imu()); // re-initialization ros imu package
+  cur_pcl_un_.reset(new PointCloudXYZI()); // create a new PointCloud pointer to reset cur_pcl_un_ object
 }
 
+// this function is used to update the state by given offs_t with calculated/estimated states(Position, Rotation, velocity, etc.)
+// to be more specific, just an update of the vector<Pose6D> IMUpose, update the storage of this variable.
 void ImuProcess::push_update_state(double offs_t, StatesGroup state)
 {
   // V3D acc_tmp(last_acc), angvel_tmp(last_ang), vel_imu(state.vel_end), pos_imu(state.pos_end);
@@ -60,16 +62,20 @@ void ImuProcess::push_update_state(double offs_t, StatesGroup state)
   // acc_tmp  = R_imu * acc_tmp + state.gravity;
   // IMUpose.push_back(set_pose6d(offs_t, acc_tmp, angvel_tmp, vel_imu, pos_imu, R_imu));
   V3D acc_tmp=acc_s_last, angvel_tmp=angvel_last, vel_imu(state.vel_end), pos_imu(state.pos_end);
-  M3D R_imu(state.rot_end);
+  // get a copy for acc_s_last(acc_tmp), angvel_last(angvel_tmp), last velocity(vel_imu), and last position as (pos_imu)
+  M3D R_imu(state.rot_end); // get a copy of rot_end as R_imu, but the format is M3D
+  // distribute this information to IMU_Processing's storage, thus the information is deep-copied.
   IMUpose.push_back(set_pose6d(offs_t, acc_tmp, angvel_tmp, vel_imu, pos_imu, R_imu));
 }
 
+// initialize the LiDAR to IMU's extrinsic transformation to be transl input, and rotation to IMU as rot
 void ImuProcess::set_extrinsic(const V3D &transl, const M3D &rot)
 {
   Lid_offset_to_IMU = transl;
   Lid_rot_to_IMU    = rot;
 }
 
+// set cov_gyr_scale to be scaler, and a series of set functions are as follows
 void ImuProcess::set_gyr_cov_scale(const V3D &scaler)
 {
   cov_gyr_scale = scaler;
@@ -90,7 +96,7 @@ void ImuProcess::set_acc_bias_cov(const V3D &b_a)
   cov_bias_acc = b_a;
 }
 
-#ifdef USE_IKFOM
+#ifdef USE_IKFOM // if IKFOM is used, than IMU_init function is enabled.
 void ImuProcess::IMU_init(const MeasureGroup &meas, esekfom::esekf<state_ikfom, 12, input_ikfom> &kf_state, int &N)
 {
   /** 1. initializing the gravity, gyro bias, acc and gyro covariance

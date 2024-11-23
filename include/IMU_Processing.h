@@ -47,7 +47,7 @@ class ImuProcess // functions and methods to process IMU stream
   ~ImuProcess();
   
   void Reset();
-  void Reset(double start_timestamp, const sensor_msgs::ImuConstPtr &lastimu);
+  void Reset(double start_timestamp, const sensor_msgs::ImuConstPtr &lastimu); // not implemented, not used.
   void push_update_state(double offs_t, StatesGroup state);
   void set_extrinsic(const V3D &transl, const M3D &rot);
   void set_gyr_cov_scale(const V3D &scaler);
