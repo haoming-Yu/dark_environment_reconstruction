@@ -27,6 +27,7 @@ Eigen::Matrix<T, 3, 3> Exp(const Eigen::Matrix<T, 3, 1> &&ang)
     }
 }
 
+// used for angular velocity with time interval exp calculation
 template<typename T, typename Ts>
 Eigen::Matrix<T, 3, 3> Exp(const Eigen::Matrix<T, 3, 1> &ang_vel, const Ts &dt)
 {

@@ -52,16 +52,16 @@
 #include "../mtk/build_manifold.hpp"
 #include "util.hpp"
 
-//#define USE_sparse
+// #define USE_sparse
 
-
+// error-state extended kalman filter optimization method
 namespace esekfom {
 
 using namespace Eigen;
 
-//used for iterated error state EKF update
-//for the aim to calculate  measurement (z), estimate measurement (h), partial differention matrices (h_x, h_v) and the noise covariance (R) at the same time, by only one function.
-//applied for measurement as a manifold.
+// used for iterated error state EKF update
+// for the aim to calculate measurement (z), estimate measurement (h), partial differention matrices (h_x, h_v) and the noise covariance (R) at the same time, by only one function.
+// applied for measurement as a manifold.
 template<typename S, typename M, int measurement_noise_dof = M::DOF>
 struct share_datastruct
 {
@@ -73,9 +73,9 @@ struct share_datastruct
 	Eigen::Matrix<typename S::scalar, measurement_noise_dof, measurement_noise_dof> R;
 };
 
-//used for iterated error state EKF update
-//for the aim to calculate  measurement (z), estimate measurement (h), partial differention matrices (h_x, h_v) and the noise covariance (R) at the same time, by only one function.
-//applied for measurement as an Eigen matrix whose dimension is changing
+// used for iterated error state EKF update
+// for the aim to calculate measurement (z), estimate measurement (h), partial differention matrices (h_x, h_v) and the noise covariance (R) at the same time, by only one function.
+// applied for measurement as an Eigen matrix whose dimension is changing
 template<typename T>
 struct dyn_share_datastruct
 {
@@ -88,9 +88,9 @@ struct dyn_share_datastruct
 	Eigen::Matrix<T, Eigen::Dynamic, Eigen::Dynamic> R;
 };
 
-//used for iterated error state EKF update
-//for the aim to calculate  measurement (z), estimate measurement (h), partial differention matrices (h_x, h_v) and the noise covariance (R) at the same time, by only one function.
-//applied for measurement as a dynamic manifold whose dimension or type is changing
+// used for iterated error state EKF update
+// for the aim to calculate measurement (z), estimate measurement (h), partial differention matrices (h_x, h_v) and the noise covariance (R) at the same time, by only one function.
+// applied for measurement as a dynamic manifold whose dimension or type is changing
 template<typename T>
 struct dyn_runtime_share_datastruct
 {
@@ -135,7 +135,7 @@ public:
 	typedef Eigen::Matrix<scalar_type, Eigen::Dynamic, Eigen::Dynamic> measurementnoisecovariance_dyn;
 
 	esekf(const state &x = state(),
-		const cov  &P = cov::Identity()): x_(x), P_(P){
+		const cov &P = cov::Identity()): x_(x), P_(P){
 	#ifdef USE_sparse
 		SparseMatrix<scalar_type> ref(n, n);
 		ref.setIdentity();

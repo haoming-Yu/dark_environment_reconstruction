@@ -145,11 +145,11 @@ namespace std
   };
 }
 
-struct MeasureGroup     
+struct MeasureGroup // a group with image(offset_time), and a deque to store imu pointer
 {
-    double img_offset_time;
-    deque<sensor_msgs::Imu::ConstPtr> imu;
-    cv::Mat img;
+    double img_offset_time; // vision offset, initialized to be 0
+    deque<sensor_msgs::Imu::ConstPtr> imu; // a double ended queue enabling insertion & deletion at both ends
+    cv::Mat img; // vision input
     MeasureGroup()
     {
         img_offset_time = 0.0;

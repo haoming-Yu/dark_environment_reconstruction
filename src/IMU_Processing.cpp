@@ -101,22 +101,23 @@ void ImuProcess::IMU_init(const MeasureGroup &meas, esekfom::esekf<state_ikfom, 
 {
   /** 1. initializing the gravity, gyro bias, acc and gyro covariance
    ** 2. normalize the acceleration measurenments to unit gravity **/
-  ROS_INFO("IMU Initializing: %.1f %%", double(N) / MAX_INI_COUNT * 100);
+  ROS_INFO("IMU Initializing: %.1f %%", double(N) / MAX_INI_COUNT * 100); // initialization percent
   V3D cur_acc, cur_gyr;
   
-  if (b_first_frame_)
+  if (b_first_frame_) // if it is the first frame
   {
-    Reset();
-    N = 1;
-    b_first_frame_ = false;
-    const auto &imu_acc = meas.imu.front()->linear_acceleration;
-    const auto &gyr_acc = meas.imu.front()->angular_velocity;
-    mean_acc << imu_acc.x, imu_acc.y, imu_acc.z;
-    mean_gyr << gyr_acc.x, gyr_acc.y, gyr_acc.z;
+    Reset(); // reset the state of the processing stream
+    N = 1; // init percent to be 1
+    b_first_frame_ = false; // the first frame is already processed, the b_first_frame_ is then set to be false
+    const auto &imu_acc = meas.imu.front()->linear_acceleration; // get the first imu's linear_acceleration
+    const auto &gyr_acc = meas.imu.front()->angular_velocity; // get the first imu's angular_velocity
+    mean_acc << imu_acc.x, imu_acc.y, imu_acc.z; // use stream to write the imm_acc into the mean_acc
+    mean_gyr << gyr_acc.x, gyr_acc.y, gyr_acc.z; // use stream to write the angular velocity into the mean_gyr
     // first_lidar_time = meas.lidar_beg_time;
     // cout<<"init acc norm: "<<mean_acc.norm()<<endl;
   }
 
+  // traverse over the imu deque
   for (const auto &imu : meas.imu)
   {
     const auto &imu_acc = imu->linear_acceleration;
@@ -134,20 +135,22 @@ void ImuProcess::IMU_init(const MeasureGroup &meas, esekfom::esekf<state_ikfom, 
 
     N ++;
   }
+  // init state using input and calculated linear acceleration and angular velocity
   state_ikfom init_state = kf_state.get_x();
   init_state.grav = S2(- mean_acc / mean_acc.norm() * G_m_s2);
   
-  //state_inout.rot = Eye3d; // Exp(mean_acc.cross(V3D(0, 0, -1 / scale_gravity)));
+  // state_inout.rot = Eye3d; // Exp(mean_acc.cross(V3D(0, 0, -1 / scale_gravity)));
   init_state.bg  = mean_gyr;
   init_state.offset_T_L_I = Lid_offset_to_IMU;
   init_state.offset_R_L_I = Lid_rot_to_IMU;
-  kf_state.change_x(init_state);
+  kf_state.change_x(init_state); // refresh kf_state using the IMU refreshed acceleration & angular velocity
 
   esekfom::esekf<state_ikfom, 12, input_ikfom>::cov init_P = kf_state.get_P() * 0.001;
-  kf_state.change_P(init_P);
-  last_imu_ = meas.imu.back();
+  kf_state.change_P(init_P); // refresh P of state by 0.001*P
+  last_imu_ = meas.imu.back(); // refresh last_imu_ to be the last imu in the deque
 }
 #else
+// IMU without USE_IKFOM information, using StatesGroup as a manifold state implementation
 void ImuProcess::IMU_init(const MeasureGroup &meas, StatesGroup &state_inout, int &N)
 {
   /** 1. initializing the gravity, gyro bias, acc and gyro covariance
@@ -195,16 +198,16 @@ void ImuProcess::IMU_init(const MeasureGroup &meas, StatesGroup &state_inout, in
 }
 #endif
 
-#ifdef USE_IKFOM
-void ImuProcess::UndistortPcl(const MeasureGroup &meas, esekfom::esekf<state_ikfom, 12, input_ikfom> &kf_state, PointCloudXYZI &pcl_out)
+#ifdef USE_IKFOM // use ikfom version -> backprop implementation of lidar points
+void ImuProcess::UndistortPcl(const MeasureGroup &meas, esekfom::ese`kf<state_ikfom, 12, input_ikfom> &kf_state, PointCloudXYZI &pcl_out)
 {
   /*** add the imu of the last frame-tail to the of current frame-head ***/
   auto v_imu = meas.imu;
   v_imu.push_front(last_imu_);
   const double &imu_beg_time = v_imu.front()->header.stamp.toSec();
-  const double &imu_end_time IMUpose.push_back(set_pose6d(offs_t, acc_imu, angvel_avr, vel_imu, pos_imu, R_imu)); time ***/
-  pcl_out = *(meas.lidar);
-  sort(pcl_out.points.begin(), pcl_out.points.end(), time_list);
+  const double &imu_end_time IMUpose.push_back(set_pose6d(offs_t, acc_imu, angvel_avr, vel_imu, pos_imu, R_imu)); /*** time setting of the imu endding point ***/
+  pcl_out = *(meas.lidar); // output is initialized to be meas.lidar data
+  sort(pcl_out.points.begin(), pcl_out.points.end(), time_list); // sort the point according to the points curvature to find the feature points.
   const double &pcl_end_time = pcl_beg_time + pcl_out.points.back().curvature / double(1000);
   // cout<<"[ IMU Process ]: Process lidar from "<<pcl_beg_time<<" to "<<pcl_end_time<<", " \
   //          <<meas.imu.size()<<" imu msgs from "<<imu_beg_time<<" to "<<imu_end_time<<endl;
@@ -322,19 +325,24 @@ void ImuProcess::UndistortPcl(const MeasureGroup &meas, esekfom::esekf<state_ikf
 }
 #else
 
+// offical forward function implementation used in the code
 void ImuProcess::Forward(const MeasureGroup &meas, StatesGroup &state_inout, double pcl_beg_time, double end_time)
 {
   /*** add the imu of the last frame-tail to the of current frame-head ***/
   auto v_imu = meas.imu;
-  v_imu.push_front(last_imu_);
-  const double &imu_beg_time = v_imu.front()->header.stamp.toSec();
+  v_imu.push_front(last_imu_); // put the last_imu_ into the front of the meas.imu(as v_imu) list
+  const double &imu_beg_time = v_imu.front()->header.stamp.toSec(); 
+  // v_imu.front() is actually last_imu_->header.stamp -> the time stamp of the v_imu, use toSec as a strategy for seconds time-stamp transformations
   const double &imu_end_time = v_imu.back()->header.stamp.toSec();
+  // end_time get the last v_imu(meas.imu vector)'s time-stamp measured in seconds.
 
   // cout<<"[ IMU Process ]: Process lidar from "<<pcl_beg_time<<" to "<<pcl_end_time<<", " \
   //          <<meas.imu.size()<<" imu msgs from "<<imu_beg_time<<" to "<<imu_end_time<<endl;
 
   // IMUpose.push_back(set_pose6d(0.0, Zero3d, Zero3d, state.vel_end, state.pos_end, state.rot_end));
   if (IMUpose.empty()) {
+    // if current imu stream processing class's IMUpose vector is empty, then it is the first frame in the stream.
+    // therefore, use 0.0 as a time-stamp initialization, and store current IMUpose from state_inout class. (using last time's lidar point cloud as the first frame's initialization)
     IMUpose.push_back(set_pose6d(0.0, acc_s_last, angvel_last, state_inout.vel_end, state_inout.pos_end, state_inout.rot_end));
   }
 
@@ -342,41 +350,46 @@ void ImuProcess::Forward(const MeasureGroup &meas, StatesGroup &state_inout, dou
   V3D acc_imu=acc_s_last, angvel_avr=angvel_last, acc_avr, vel_imu(state_inout.vel_end), pos_imu(state_inout.pos_end);
   M3D R_imu(state_inout.rot_end);
   //  last_state = state_inout;
-  MD(DIM_STATE, DIM_STATE) F_x, cov_w;
+  MD(DIM_STATE, DIM_STATE) F_x, cov_w; // 18*18 matrix
   
-  double dt = 0;
-  for (auto it_imu = v_imu.begin(); it_imu < (v_imu.end() - 1); it_imu++)
+  double dt = 0; // represent the time interval.
+  for (auto it_imu = v_imu.begin(); it_imu < (v_imu.end() - 1); it_imu++) // traverse each v_imu frame from two frames of lidar
   {
+    // initialize head to be current imu iteration, and tail to be the next imu frame
     auto &&head = *(it_imu);
     auto &&tail = *(it_imu + 1);
     
-    if (tail->header.stamp.toSec() < last_lidar_end_time_)    continue;
+    if (tail->header.stamp.toSec() < last_lidar_end_time_)    continue; // if current imu's last frame time less than last lidar end time, just discard this frame
+    // only select those imu frame with time stamp later than last_lidar_end_time_.
     
+    // calculate the average angular velocity of each composition between head and tail.
     angvel_avr<<0.5 * (head->angular_velocity.x + tail->angular_velocity.x),
                 0.5 * (head->angular_velocity.y + tail->angular_velocity.y),
                 0.5 * (head->angular_velocity.z + tail->angular_velocity.z);
 
     // angvel_avr<<tail->angular_velocity.x, tail->angular_velocity.y, tail->angular_velocity.z;
 
+    // process the linear_acceleration the same as angvel_avr
     acc_avr   <<0.5 * (head->linear_acceleration.x + tail->linear_acceleration.x),
                 0.5 * (head->linear_acceleration.y + tail->linear_acceleration.y),
                 0.5 * (head->linear_acceleration.z + tail->linear_acceleration.z);
-    last_acc = acc_avr;
-    last_ang = angvel_avr;
+    last_acc = acc_avr; // refresh last_acc to be average linear acceleration value between head and tail.
+    last_ang = angvel_avr; // refresh last_ang to be average angular velocity value between head and tail.
     // #ifdef DEBUG_PRINT
-      fout_imu << setw(10) << head->header.stamp.toSec() - first_lidar_time << " " << angvel_avr.transpose() << " " << acc_avr.transpose() << endl;
+    // for debug
+    fout_imu << setw(10) << head->header.stamp.toSec() - first_lidar_time << " " << angvel_avr.transpose() << " " << acc_avr.transpose() << endl;
     // #endif
 
-    angvel_avr -= state_inout.bias_g;
-    acc_avr     = acc_avr * G_m_s2 / mean_acc.norm() - state_inout.bias_a;
+    angvel_avr -= state_inout.bias_g; // average angular velocity sub state_inout.bias_g to get the accurate angular velocity correction
+    acc_avr     = acc_avr * G_m_s2 / mean_acc.norm() - state_inout.bias_a; // correct the linear acceleration result
 
     if(head->header.stamp.toSec() < last_lidar_end_time_)
     {
-      dt = tail->header.stamp.toSec() - last_lidar_end_time_;
+      dt = tail->header.stamp.toSec() - last_lidar_end_time_; // if head is before the last lidar_end_time, just selects the second part as a time duration
     }
     else
     {
-      dt = tail->header.stamp.toSec() - head->header.stamp.toSec();
+      dt = tail->header.stamp.toSec() - head->header.stamp.toSec(); // if head is after last lidar, then just select duration between tail and head.
     }
     // cout<<setw(20)<<"dt: "<<dt<<endl;
     /* covariance propagation */
@@ -440,6 +453,7 @@ void ImuProcess::Forward(const MeasureGroup &meas, StatesGroup &state_inout, dou
   #endif
 }
 
+// if we use other method that can get LiDAR Point Cloud at the same time, we do not need Backward function here.
 void ImuProcess::Backward(const LidarMeasureGroup &lidar_meas, StatesGroup &state_inout, PointCloudXYZI &pcl_out)
 {
   /*** undistort each lidar point (backward propagation) ***/
@@ -542,10 +556,12 @@ void ImuProcess::Process(const LidarMeasureGroup &lidar_meas,  esekfom::esekf<st
   // cout<<"[ IMU Process ]: Time: "<<t3 - t1<<endl;
 }
 #else
+
+// process with the point cloud needs backward
 void ImuProcess::Process(const LidarMeasureGroup &lidar_meas, StatesGroup &stat, PointCloudXYZI::Ptr cur_pcl_un_)
 {
   double t1,t2,t3;
-  t1 = omp_get_wtime();
+  t1 = omp_get_wtime(); // return accurate time of current running program
   ROS_ASSERT(lidar_meas.lidar != nullptr);
   MeasureGroup meas = lidar_meas.measures.back();
 
@@ -553,7 +569,7 @@ void ImuProcess::Process(const LidarMeasureGroup &lidar_meas, StatesGroup &stat,
   {
     if(meas.imu.empty()) {return;};
     /// The very first lidar frame
-    IMU_init(meas, stat, init_iter_num);
+    IMU_init(meas, stat, init_iter_num); // call private function to init itself
 
     imu_need_init_ = true;
     
@@ -858,7 +874,7 @@ void ImuProcess::Process2(LidarMeasureGroup &lidar_meas, StatesGroup &stat, Poin
 
     return;
   }
-  UndistortPcl(lidar_meas, stat, *cur_pcl_un_);
+  UndistortPcl(lidar_meas, stat, *cur_pcl_un_); // forward and backward
 }
 
 #endif

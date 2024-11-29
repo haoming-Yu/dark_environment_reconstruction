@@ -5,7 +5,7 @@
 
 using namespace std;
 
-#define IS_VALID(a)  ((abs(a)>1e8) ? true : false)
+#define IS_VALID(a)  ((abs(a)>1e8) ? true : false) // whether it is a effective epsilon in cpp calculation.
 
 typedef pcl::PointXYZINormal PointType;
 typedef pcl::PointCloud<PointType> PointCloudXYZI;

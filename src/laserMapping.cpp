@@ -64,8 +64,11 @@
 #include <cv_bridge/cv_bridge.h>
 #include <opencv2/opencv.hpp>
 #include <vikit/camera_loader.h>
-#include"lidar_selection.h"
+#include "lidar_selection.h"
 
+// this file modifies the implementation in LIVOX driver, implement special functions.
+
+// incremental k-dimensional tree implementation on spatial control
 #ifdef USE_ikdtree
     #ifdef USE_ikdforest
     #include <ikd-Forest/ikd_Forest.h>
@@ -76,33 +79,34 @@
 #include <pcl/kdtree/kdtree_flann.h>
 #endif
 
+// init_time, maxn, pubframe_period definition
 #define INIT_TIME           (0.5)
 #define MAXN                (360000)
 #define PUBFRAME_PERIOD     (20)
 
-float DET_RANGE = 300.0f;
-#ifdef USE_ikdforest
+float DET_RANGE = 300.0f; // det_range = 300.0f
+#ifdef USE_ikdforest // if incremental k-dimentional forest is used to do spetial control, laser width/height/depth need to be specified at the first.
     const int laserCloudWidth  = 200;
     const int laserCloudHeight = 200;
     const int laserCloudDepth  = 200;
     const int laserCloudNum = laserCloudWidth * laserCloudHeight * laserCloudDepth;
 #else
-    const float MOV_THRESHOLD = 1.5f;
+    const float MOV_THRESHOLD = 1.5f; // mov_threshold is set to be 1.5f
 #endif
 
-mutex mtx_buffer;
-condition_variable sig_buffer;
+mutex mtx_buffer; // a mutex for multi-thread control
+condition_variable sig_buffer; // conditional variable sig_buffer
 
 // mutex mtx_buffer_pointcloud;
 
-string root_dir = ROOT_DIR;
-string map_file_path, lid_topic, imu_topic, img_topic, config_file;;
-M3D Eye3d(M3D::Identity());
-M3F Eye3f(M3F::Identity());
+string root_dir = ROOT_DIR; // root_dir definition
+string map_file_path, lid_topic, imu_topic, img_topic, config_file; // a series of topics, map_file_depth and config_file
+M3D Eye3d(M3D::Identity()); // define Eye3d to be identity matrix of eigen matrix
+M3F Eye3f(M3F::Identity()); // define Eye3f to be identity matrix of eigen matrix as well
 V3D Zero3d(0, 0, 0);
 V3F Zero3f(0, 0, 0);
-Vector3d Lidar_offset_to_IMU(Zero3d);
-M3D Lidar_rot_to_IMU(Eye3d);
+Vector3d Lidar_offset_to_IMU(Zero3d); // initialize Lidar_offset_to_IMU as zero translation
+M3D Lidar_rot_to_IMU(Eye3d); // initialize Lidar_rot_to_IMU as identity rotaion -> no rotation
 int iterCount = 0, feats_down_size = 0, NUM_MAX_ITERATIONS = 0, laserCloudValidNum = 0,\
     effct_feat_num = 0, time_log_counter = 0, publish_count = 0;
 int MIN_IMG_COUNT = 0;
@@ -205,7 +209,7 @@ nav_msgs::Odometry odomAftMapped;
 geometry_msgs::Quaternion geoQuat;
 geometry_msgs::PoseStamped msg_body_pose;
 
-shared_ptr<Preprocess> p_pre(new Preprocess());
+shared_ptr<Preprocess> p_pre(new Preprocess()); // a preprocess object to handle new point cloud input
 
 PointCloudXYZRGB::Ptr pcl_wait_save(new PointCloudXYZRGB());  //add save rbg map
 PointCloudXYZI::Ptr pcl_wait_save_lidar(new PointCloudXYZI());  //add save xyzi map
@@ -269,6 +273,7 @@ void pointBodyToWorld_ikfom(PointType const * const pi, PointType * const po, st
 }
 #endif
 
+// transfer points of lidar detection into global frame.
 void pointBodyToWorld(PointType const * const pi, PointType * const po)
 {
     V3D p_body(pi->x, pi->y, pi->z);
@@ -285,6 +290,7 @@ void pointBodyToWorld(PointType const * const pi, PointType * const po)
     po->intensity = pi->intensity;
 }
 
+// template version for matrix manipulation
 template<typename T>
 void pointBodyToWorld(const Matrix<T, 3, 1> &pi, Matrix<T, 3, 1> &po)
 {
@@ -300,6 +306,7 @@ void pointBodyToWorld(const Matrix<T, 3, 1> &pi, Matrix<T, 3, 1> &po)
     po[2] = p_global(2);
 }
 
+// RGBPoint translation: geometric -> the same; intensity -> only keep the floating part of intensity and then scale the floating part to 10000 times
 void RGBpointBodyToWorld(PointType const * const pi, PointType * const po)
 {
     V3D p_body(pi->x, pi->y, pi->z);
@@ -321,7 +328,7 @@ void RGBpointBodyToWorld(PointType const * const pi, PointType * const po)
 }
 
 #ifndef USE_ikdforest
-int points_cache_size = 0;
+int points_cache_size = 0; // if don't use ikdforest, remove history points into points_history
 void points_cache_collect()
 {
     PointVector points_history;
@@ -330,6 +337,7 @@ void points_cache_collect()
 }
 #endif
 
+// change center point into box vertex point
 BoxPointType get_cube_point(float center_x, float center_y, float center_z)
 {
     BoxPointType cube_points;
@@ -345,6 +353,7 @@ BoxPointType get_cube_point(float center_x, float center_y, float center_z)
     return cube_points;
 }
 
+// get cube point with different input parameters
 BoxPointType get_cube_point(float xmin, float ymin, float zmin, float xmax, float ymax, float zmax)
 {
     BoxPointType cube_points;
@@ -359,37 +368,37 @@ BoxPointType get_cube_point(float xmin, float ymin, float zmin, float xmax, floa
 
 #ifndef USE_ikdforest
 BoxPointType LocalMap_Points;
-bool Localmap_Initialized = false;
+bool Localmap_Initialized = false; // Localmap_Initialized is a variable indicating whether Localmap has been initialized.
 void lasermap_fov_segment()
 {
-    cub_needrm.clear();
-    kdtree_delete_counter = 0;
-    kdtree_delete_time = 0.0;    
+    cub_needrm.clear(); // clear away cub_needrm buffern
+    kdtree_delete_counter = 0; // indicate deleting kdtree operation number
+    kdtree_delete_time = 0.0; // delete timing of each kdtree operation
     pointBodyToWorld(XAxisPoint_body, XAxisPoint_world);
     #ifdef USE_IKFOM
     //state_ikfom fov_state = kf.get_x();
     //V3D pos_LiD = fov_state.pos + fov_state.rot * fov_state.offset_T_L_I;
     V3D pos_LiD = pos_lid;
     #else
-    V3D pos_LiD = state.pos_end;
+    V3D pos_LiD = state.pos_end; // imu position in the world coordinate actually.
     #endif
-    if (!Localmap_Initialized){
+    if (!Localmap_Initialized){ // if not initialized, then do vertex localmap initialization
         //if (cube_len <= 2.0 * MOV_THRESHOLD * DET_RANGE) throw std::invalid_argument("[Error]: Local Map Size is too small! Please change parameter \"cube_side_length\" to larger than %d in the launch file.\n");
         for (int i = 0; i < 3; i++){
-            LocalMap_Points.vertex_min[i] = pos_LiD(i) - cube_len / 2.0;
-            LocalMap_Points.vertex_max[i] = pos_LiD(i) + cube_len / 2.0;
+            LocalMap_Points.vertex_min[i] = pos_LiD(i) - cube_len / 2.0; // use current position of IMU as a center point to calculate min cube coordinate in IMU coordinate
+            LocalMap_Points.vertex_max[i] = pos_LiD(i) + cube_len / 2.0; // use current position of IMU as a center point to calculate max cube coordinate in IMU coordinate
         }
-        Localmap_Initialized = true;
+        Localmap_Initialized = true; // localmap is initialized, the cube is used to refine whether the point has been outlier of current frame
         return;
     }
     // printf("Local Map is (%0.2f,%0.2f) (%0.2f,%0.2f) (%0.2f,%0.2f)\n", LocalMap_Points.vertex_min[0],LocalMap_Points.vertex_max[0],LocalMap_Points.vertex_min[1],LocalMap_Points.vertex_max[1],LocalMap_Points.vertex_min[2],LocalMap_Points.vertex_max[2]);
     float dist_to_map_edge[3][2];
     bool need_move = false;
     for (int i = 0; i < 3; i++){
-        dist_to_map_edge[i][0] = fabs(pos_LiD(i) - LocalMap_Points.vertex_min[i]);
-        dist_to_map_edge[i][1] = fabs(pos_LiD(i) - LocalMap_Points.vertex_max[i]);
+        dist_to_map_edge[i][0] = fabs(pos_LiD(i) - LocalMap_Points.vertex_min[i]); // calculate distance from center of IMU frame to the edge of the IMU frame, on x axis
+        dist_to_map_edge[i][1] = fabs(pos_LiD(i) - LocalMap_Points.vertex_max[i]); // calculate distance on y axis
         if (dist_to_map_edge[i][0] <= MOV_THRESHOLD * DET_RANGE || dist_to_map_edge[i][1] <= MOV_THRESHOLD * DET_RANGE) need_move = true;
-    }
+    } // the distance from center to map edge does not reach MOV_THRESHOLD * DET_RANGE, this LocalMap needs to be removed, not trustable.
     if (!need_move) return;
     BoxPointType New_LocalMap_Points, tmp_boxpoints;
     New_LocalMap_Points = LocalMap_Points;
@@ -421,6 +430,8 @@ void lasermap_fov_segment()
 }
 #endif
 
+// a point cloud message is passed to standard_pcl_cbk function, and main program
+// create a new process to handle it.
 void standard_pcl_cbk(const sensor_msgs::PointCloud2::ConstPtr &msg) 
 {
     mtx_buffer.lock();
@@ -428,20 +439,20 @@ void standard_pcl_cbk(const sensor_msgs::PointCloud2::ConstPtr &msg)
     if (msg->header.stamp.toSec() < last_timestamp_lidar)
     {
         ROS_ERROR("lidar loop back, clear buffer");
-        lidar_buffer.clear();
+        lidar_buffer.clear(); // current lidar time stamp must be larger than last_timestamp_lidar to be added and handled as a new lidar frame.
     }
     
     PointCloudXYZI::Ptr  ptr(new PointCloudXYZI());
-    p_pre->process(msg, ptr);
+    p_pre->process(msg, ptr); // use p_pre's object to do handler specification, now ptr is filled with surface points on current detection
     // ROS_INFO("get point cloud at time: %.6f and size: %d", msg->header.stamp.toSec() - 0.1, ptr->points.size());
     printf("[ INFO ]: get point cloud at time: %.6f and size: %d.\n", msg->header.stamp.toSec(), int(ptr->points.size()));
     lidar_buffer.push_back(ptr);
     // time_buffer.push_back(msg->header.stamp.toSec() - 0.1);
     // last_timestamp_lidar = msg->header.stamp.toSec() - 0.1;
     time_buffer.push_back(msg->header.stamp.toSec());
-    last_timestamp_lidar = msg->header.stamp.toSec();
-    mtx_buffer.unlock();
-    sig_buffer.notify_all();
+    last_timestamp_lidar = msg->header.stamp.toSec(); // refresh last_timestamp_lidar to be msg->header.stamp.toSec()
+    mtx_buffer.unlock(); // release mutex
+    sig_buffer.notify_all(); // notify all processes to run.
 }
 
 void livox_pcl_cbk(const livox_ros_driver::CustomMsg::ConstPtr &msg) 
@@ -455,7 +466,8 @@ void livox_pcl_cbk(const livox_ros_driver::CustomMsg::ConstPtr &msg)
     printf("[ INFO ]: get point cloud at time: %.6f.\n", msg->header.stamp.toSec());
     PointCloudXYZI::Ptr ptr(new PointCloudXYZI());
     p_pre->process(msg, ptr);
-    lidar_buffer.push_back(ptr);
+    lidar_buffer.push_back(ptr); // put all surface point ready to be added into a buffer, if later there is a frame with smaller timestamp, 
+    // then clear away this buffer for the information transformation error.
     time_buffer.push_back(msg->header.stamp.toSec());
     last_timestamp_lidar = msg->header.stamp.toSec();
 
@@ -479,9 +491,9 @@ void imu_cbk(const sensor_msgs::Imu::ConstPtr &msg_in)
         flg_reset = true;
     }
 
-    last_timestamp_imu = timestamp;
+    last_timestamp_imu = timestamp; // refresh last_timestamp_imu
 
-    imu_buffer.push_back(msg);
+    imu_buffer.push_back(msg); // just push these msg of imu back into imu_buffer
     // cout<<"got imu: "<<timestamp<<" imu size "<<imu_buffer.size()<<endl;
     mtx_buffer.unlock();
     sig_buffer.notify_all();
@@ -489,10 +501,11 @@ void imu_cbk(const sensor_msgs::Imu::ConstPtr &msg_in)
 
 cv::Mat getImageFromMsg(const sensor_msgs::ImageConstPtr& img_msg) {
   cv::Mat img;
-  img = cv_bridge::toCvCopy(img_msg, "bgr8")->image;
+  img = cv_bridge::toCvCopy(img_msg, "bgr8")->image; // change format of image
   return img;
 }
 
+// the same processing logic as IMU & lidar point cloud.
 void img_cbk(const sensor_msgs::ImageConstPtr& msg)
 {
     if (!img_en) 
@@ -517,6 +530,7 @@ void img_cbk(const sensor_msgs::ImageConstPtr& msg)
     sig_buffer.notify_all();
 }
 
+// for an input lidar measure package, do package synchronization.
 bool sync_packages(LidarMeasureGroup &meas)
 {
     if ((lidar_buffer.empty() && img_buffer.empty())) { // has lidar topic or img topic?
@@ -534,14 +548,15 @@ bool sync_packages(LidarMeasureGroup &meas)
             // ROS_ERROR("out sync");
             return false;
         }
-        meas.lidar = lidar_buffer.front(); // push the firsrt lidar topic
+        meas.lidar = lidar_buffer.front(); // push the first lidar topic
         if(meas.lidar->points.size() <= 1)
         {
             mtx_buffer.lock();
+            // if there are no lidar points, but with image input -> lidar package lost.
             if (img_buffer.size()>0) // temp method, ignore img topic when no lidar points, keep sync
             {
                 lidar_buffer.pop_front();
-                img_buffer.pop_front();
+                img_buffer.pop_front(); // ignore current information, lidar is lost, thus image is not trustable.
             }
             mtx_buffer.unlock();
             sig_buffer.notify_all();
@@ -558,18 +573,18 @@ bool sync_packages(LidarMeasureGroup &meas)
         if (last_timestamp_imu < lidar_end_time+0.02) { // imu message needs to be larger than lidar_end_time, keep complete propagate.
             // ROS_ERROR("out sync");
             return false;
-        }
-        struct MeasureGroup m; //standard method to keep imu message.
-        double imu_time = imu_buffer.front()->header.stamp.toSec();
-        m.imu.clear();
+        } // if IMU is less than lidar_end_time, means that the IMU information is lost, not doing the processing real-time.
+        struct MeasureGroup m; // standard method to keep imu message. -> waiting to be refreshed and filled with recordings
+        double imu_time = imu_buffer.front()->header.stamp.toSec(); // the first IMU waiting to be processed in the buffer is current imu_time
+        m.imu.clear(); // clear away the imu vector before pushing of MeasureGroup
         mtx_buffer.lock();
         while ((!imu_buffer.empty() && (imu_time<lidar_end_time))) {
             imu_time = imu_buffer.front()->header.stamp.toSec();
             if(imu_time > lidar_end_time) break;
             m.imu.push_back(imu_buffer.front());
             imu_buffer.pop_front();
-        }
-        lidar_buffer.pop_front();
+        } // one-by-one checking and pushing into the imu meansurement for global adjustment
+        lidar_buffer.pop_front(); // if no image is detected, then lidar frame is deprecated, the synchronization has problem.
         time_buffer.pop_front();
         mtx_buffer.unlock();
         sig_buffer.notify_all();
@@ -582,23 +597,26 @@ bool sync_packages(LidarMeasureGroup &meas)
     struct MeasureGroup m;
     // cout<<"lidar_buffer.size(): "<<lidar_buffer.size()<<" img_buffer.size(): "<<img_buffer.size()<<endl;
     // cout<<"time_buffer.size(): "<<time_buffer.size()<<" img_time_buffer.size(): "<<img_time_buffer.size()<<endl;
-    // cout<<"img_time_buffer.front(): "<<img_time_buffer.front()<<"lidar_end_time: "<<lidar_end_time<<"last_timestamp_imu: "<<last_timestamp_imu<<endl;
-    if ((img_time_buffer.front()>lidar_end_time) )
+    // cout<<"img_time_buffer.front(): "<<img_time_buffer.front()<<"lidar_end_time: 5"<<lidar_end_time<<"last_timestamp_imu: "<<last_timestamp_imu<<endl;
+    
+    // now image and lidar frames are both accessible
+    // if first image frame time bigger than lidar frame, then process lidar topic according to frame sequence.
+    if ((img_time_buffer.front()>lidar_end_time))
     { // has img topic, but img topic timestamp larger than lidar end time, process lidar topic.
-        if (last_timestamp_imu < lidar_end_time+0.02) 
+        if (last_timestamp_imu < lidar_end_time+0.02) // no imu data yet, can not do sync
         {
             // ROS_ERROR("out sync");
             return false;
         }
-        double imu_time = imu_buffer.front()->header.stamp.toSec();
-        m.imu.clear();
+        double imu_time = imu_buffer.front()->header.stamp.toSec(); // get the first imu_time of imu_buffer
+        m.imu.clear(); // clear away imu data to ensure empty
         mtx_buffer.lock();
-        while ((!imu_buffer.empty() && (imu_time<lidar_end_time))) 
+        while ((!imu_buffer.empty() && (imu_time<lidar_end_time))) // imu time before lidar ending frame. 
         {
-            imu_time = imu_buffer.front()->header.stamp.toSec();
-            if(imu_time > lidar_end_time) break;
-            m.imu.push_back(imu_buffer.front());
-            imu_buffer.pop_front();
+            imu_time = imu_buffer.front()->header.stamp.toSec(); // get current frame.
+            if(imu_time > lidar_end_time) break; // check, if imu_time bigger than lidar_end_time, break
+            m.imu.push_back(imu_buffer.front()); // push legal imu time into the buffer
+            imu_buffer.pop_front(); // processed, clear away this imu_buffer
         }
         lidar_buffer.pop_front();
         time_buffer.pop_front();
