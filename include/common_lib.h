@@ -448,12 +448,13 @@ bool esti_normvector(Matrix<T, 3, 1> &normvec, const PointVector &point, const T
 }
 
 template<typename T>
+// do the plane esitimation
 bool esti_plane(Matrix<T, 4, 1> &pca_result, const PointVector &point, const T &threshold)
 {
     Matrix<T, NUM_MATCH_POINTS, 3> A;
     Matrix<T, NUM_MATCH_POINTS, 1> b;
     b.setOnes();
-    b *= -1.0f;
+    b *= -1.0f; // b is -1s
 
     for (int j = 0; j < NUM_MATCH_POINTS; j++)
     {
@@ -462,16 +463,21 @@ bool esti_plane(Matrix<T, 4, 1> &pca_result, const PointVector &point, const T &
         A(j,2) = point[j].z;
     }
 
-    Matrix<T, 3, 1> normvec = A.colPivHouseholderQr().solve(b);
+    Matrix<T, 3, 1> normvec = A.colPivHouseholderQr().solve(b); // solve Ax = b equation, normvec is x, use least squre method to solve the equation.
 
-    T n = normvec.norm();
-    pca_result(0) = normvec(0) / n;
-    pca_result(1) = normvec(1) / n;
-    pca_result(2) = normvec(2) / n;
-    pca_result(3) = 1.0 / n;
+    T n = normvec.norm(); // L2 normalization, calculate the normvec as the argument of the plane.
+    // plane should be: ax + by + cz + d = 0 => ax + by + cz = -d => (a/d)x + (b/d)y + (c/d)z = -1
+    // normvec is [(a/d), (b/d), (c/d)], which is [normvec.x, normvec.y, normvec.z]
+    // plane equation can be approximated to normvec.x * x + nomrvec.y * y + normvec.z * z + 1 = 0
+    // both devided by n we get approximation of plane function: pca_result[0] * x + pca_result[1] * y + pca_result[2] * z + pca_result[3] = 0
+    pca_result(0) = normvec(0) / n; // normalized x.x
+    pca_result(1) = normvec(1) / n; // normalized x.y
+    pca_result(2) = normvec(2) / n; // normalized x.z
+    pca_result(3) = 1.0 / n; // x.w
 
     for (int j = 0; j < NUM_MATCH_POINTS; j++)
     {
+        // fabs of left-hand side of the equation calculation. If bias is more than threshold, the equation is no longer effetive any more.
         if (fabs(pca_result(0) * point[j].x + pca_result(1) * point[j].y + pca_result(2) * point[j].z + pca_result(3)) > threshold)
         {
             return false;
@@ -491,7 +497,7 @@ bool esti_plane(Matrix<T, 4, 1> &pca_result, const PointVector &point, const T &
     // pca_result(1) = normvec(1) / n;
     // pca_result(2) = normvec(2) / n;
     // pca_result(3) = 1.0 / n; 
-    return true;
+    return true; // here we find an approximation of the plane within bias of threshold.
 }
 
 #endif

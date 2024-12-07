@@ -618,7 +618,7 @@ bool sync_packages(LidarMeasureGroup &meas)
             m.imu.push_back(imu_buffer.front()); // push legal imu time into the buffer
             imu_buffer.pop_front(); // processed, clear away this imu_buffer
         }
-        lidar_buffer.pop_front();
+        lidar_buffer.pop_front(); // the sync is already done, refresh lidar buffer.
         time_buffer.pop_front();
         mtx_buffer.unlock();
         sig_buffer.notify_all();
@@ -627,18 +627,18 @@ bool sync_packages(LidarMeasureGroup &meas)
         meas.measures.push_back(m);
     }
     else 
-    {
+    { // img_time_buffer's first frame is less than lidar_end_time, so process image first according to physical timestamp.
         double img_start_time = img_time_buffer.front(); // process img topic, record timestamp
-        if (last_timestamp_imu < img_start_time) 
+        if (last_timestamp_imu < img_start_time) // last recorded imu must have record current image sampling
         {
             // ROS_ERROR("out sync");
             return false;
         }
-        double imu_time = imu_buffer.front()->header.stamp.toSec();
+        double imu_time = imu_buffer.front()->header.stamp.toSec(); // get current imu time.
         m.imu.clear();
         m.img_offset_time = img_start_time - meas.lidar_beg_time; // record img offset time, it shoule be the Kalman update timestamp.
-        m.img = img_buffer.front();
-        mtx_buffer.lock();
+        m.img = img_buffer.front(); // get image into measurement group buffer
+        mtx_buffer.lock(); // modify measurement imu vector list and imu_buffer, img_buffer, img_time_buffer, thus lock it up.
         while ((!imu_buffer.empty() && (imu_time<img_start_time))) 
         {
             imu_time = imu_buffer.front()->header.stamp.toSec();
@@ -648,7 +648,7 @@ bool sync_packages(LidarMeasureGroup &meas)
         }
         img_buffer.pop_front();
         img_time_buffer.pop_front();
-        mtx_buffer.unlock();
+        mtx_buffer.unlock(); // unlock the mutex
         sig_buffer.notify_all();
         meas.is_lidar_end = false; // has img topic in lidar scan, so flag "is_lidar_end=false" 
         meas.measures.push_back(m);
@@ -707,24 +707,25 @@ bool sync_packages(LidarMeasureGroup &meas)
     // lidar_pushed = false;
 }
 
-void map_incremental()
+void map_incremental() // do transformation from current frustum to world transform.
 {
-    for (int i = 0; i < feats_down_size; i++)
+    for (int i = 0; i < feats_down_size; i++) // iterate feats_down_size times for transform.
     {
         /* transform to world frame */
-        pointBodyToWorld(&(feats_down_body->points[i]), &(feats_down_world->points[i]));
+        pointBodyToWorld(&(feats_down_body->points[i]), &(feats_down_world->points[i])); // transform body points to world points.
+        // this function transform points from current frustum to world coordinate.
     }
 #ifdef USE_ikdtree
     #ifdef USE_ikdforest
     ikdforest.Add_Points(feats_down_world->points, lidar_end_time);
     #else
-    ikdtree.Add_Points(feats_down_world->points, true);
+    ikdtree.Add_Points(feats_down_world->points, true); // also use world coordinate added points to refresh ikdtree.
     #endif
 #endif
 }
 
 // PointCloudXYZRGB::Ptr pcl_wait_pub_RGB(new PointCloudXYZRGB(500000, 1));
-PointCloudXYZI::Ptr pcl_wait_pub(new PointCloudXYZI());
+PointCloudXYZI::Ptr pcl_wait_pub(new PointCloudXYZI()); // create a pcl object waiting for publication to topics.
 void publish_frame_world_rgb(const ros::Publisher & pubLaserCloudFullRes, lidar_selection::LidarSelectorPtr lidar_selector)
 {
     // PointCloudXYZI::Ptr laserCloudFullRes(dense_map_en ? feats_undistort : feats_down_body);
@@ -737,12 +738,12 @@ void publish_frame_world_rgb(const ros::Publisher & pubLaserCloudFullRes, lidar_
     //     RGBpointBodyToWorld(&laserCloudFullRes->points[i], \
     //                         &laserCloudWorld->points[i]);
     // }
-    uint size = pcl_wait_pub->points.size();
-    PointCloudXYZRGB::Ptr laserCloudWorldRGB(new PointCloudXYZRGB(size, 1));
-    if(img_en)
+    uint size = pcl_wait_pub->points.size(); // publish point size.
+    PointCloudXYZRGB::Ptr laserCloudWorldRGB(new PointCloudXYZRGB(size, 1)); // create a pointcloud object slots for world coordinate control
+    if(img_en) // if img_en is switched on, use visual odometry
     {
-        laserCloudWorldRGB->clear();
-        cv::Mat img_rgb = lidar_selector->img_rgb;
+        laserCloudWorldRGB->clear(); // ensure it is clean
+        cv::Mat img_rgb = lidar_selector->img_rgb; // get current rgb image
         for (int i=0; i<size; i++)
         {
             PointTypeRGB pointRGB;
@@ -750,16 +751,16 @@ void publish_frame_world_rgb(const ros::Publisher & pubLaserCloudFullRes, lidar_
             pointRGB.y =  pcl_wait_pub->points[i].y;
             pointRGB.z =  pcl_wait_pub->points[i].z;
             V3D p_w(pcl_wait_pub->points[i].x, pcl_wait_pub->points[i].y, pcl_wait_pub->points[i].z);
-            V3D pf(lidar_selector->new_frame_->w2f(p_w));
-            if (pf[2] < 0) continue;
-            V2D pc(lidar_selector->new_frame_->w2c(p_w));
+            V3D pf(lidar_selector->new_frame_->w2f(p_w)); // convert the world point coordinate to frame coordinate
+            if (pf[2] < 0) continue; // the point is outside of the current range.
+            V2D pc(lidar_selector->new_frame_->w2c(p_w)); // to camera uv coordinate
             if (lidar_selector->new_frame_->cam_->isInFrame(pc.cast<int>(),0))
             {
                 V3F pixel = lidar_selector->getpixel(img_rgb, pc);
                 pointRGB.r = pixel[2];
                 pointRGB.g = pixel[1];
                 pointRGB.b = pixel[0];
-                laserCloudWorldRGB->push_back(pointRGB);
+                laserCloudWorldRGB->push_back(pointRGB); // store the corresponding color into laserCloudWorldRGB vector
             }
 
         }
@@ -772,20 +773,20 @@ void publish_frame_world_rgb(const ros::Publisher & pubLaserCloudFullRes, lidar_
     // mtx_buffer_pointcloud.lock();
     if (1)//if(publish_count >= PUBFRAME_PERIOD)
     {
-        sensor_msgs::PointCloud2 laserCloudmsg;
+        sensor_msgs::PointCloud2 laserCloudmsg; // create a message for transmittance
         if (img_en)
         {
             // cout<<"RGB pointcloud size: "<<laserCloudWorldRGB->size()<<endl;
-            pcl::toROSMsg(*laserCloudWorldRGB, laserCloudmsg);
+            pcl::toROSMsg(*laserCloudWorldRGB, laserCloudmsg); // if image is enabled, transform laserCloudWorldRGB(points with image patch color) to transmit.
         }
         else
         {
-            pcl::toROSMsg(*pcl_wait_pub, laserCloudmsg);
+            pcl::toROSMsg(*pcl_wait_pub, laserCloudmsg); // if image is not enabled, transform pcl_wait_pub to laserCloudmsg.
         }
-        laserCloudmsg.header.stamp = ros::Time::now();//.fromSec(last_timestamp_lidar);
-        laserCloudmsg.header.frame_id = "camera_init";
-        pubLaserCloudFullRes.publish(laserCloudmsg);
-        publish_count -= PUBFRAME_PERIOD;
+        laserCloudmsg.header.stamp = ros::Time::now(); // .fromSec(last_timestamp_lidar); -> get current time header stamp
+        laserCloudmsg.header.frame_id = "camera_init"; // set current frame_id as camera init
+        pubLaserCloudFullRes.publish(laserCloudmsg); // publish laserCloudmsg to topic.
+        publish_count -= PUBFRAME_PERIOD; // one frame has been published, thus minus 20 for imu cbk counting.
         // pcl_wait_pub->clear();
     }
     // mtx_buffer_pointcloud.unlock();
@@ -795,6 +796,7 @@ void publish_frame_world_rgb(const ros::Publisher & pubLaserCloudFullRes, lidar_
     if (pcd_save_en) *pcl_wait_save += *laserCloudWorldRGB;          
 }
 
+// only publish world point with no RGB color.
 void publish_frame_world(const ros::Publisher & pubLaserCloudFullRes)
 {
     // PointCloudXYZI::Ptr laserCloudFullRes(dense_map_en ? feats_undistort : feats_down_body);
@@ -811,14 +813,14 @@ void publish_frame_world(const ros::Publisher & pubLaserCloudFullRes)
     // PointCloudXYZ::Ptr laserCloudWorld(new PointCloudXYZ(size, 1));
     // else
     // {
-    //*pcl_wait_pub = *laserCloudWorld;
+    //   *pcl_wait_pub = *laserCloudWorld;
     // }
     // mtx_buffer_pointcloud.lock();
     if (1)//if(publish_count >= PUBFRAME_PERIOD)
     {
-        sensor_msgs::PointCloud2 laserCloudmsg;
+        sensor_msgs::PointCloud2 laserCloudmsg; // create a new sensor_msgs for topic transmittance.
 
-        pcl::toROSMsg(*pcl_wait_pub, laserCloudmsg);
+        pcl::toROSMsg(*pcl_wait_pub, laserCloudmsg); // transform pcl_wait_publication to laser cloud message.
         
         laserCloudmsg.header.stamp = ros::Time::now();//.fromSec(last_timestamp_lidar);
         laserCloudmsg.header.frame_id = "camera_init";
@@ -830,11 +832,12 @@ void publish_frame_world(const ros::Publisher & pubLaserCloudFullRes)
     if (pcd_save_en) *pcl_wait_save_lidar += *pcl_wait_pub;
 }
 
+// change the init object to map_cur_frame_point
 void publish_visual_world_map(const ros::Publisher & pubVisualCloud)
 {
     PointCloudXYZI::Ptr laserCloudFullRes(map_cur_frame_point);
     int size = laserCloudFullRes->points.size();
-    if (size==0) return;
+    if (size == 0) return;
     // PointCloudXYZI::Ptr laserCloudWorld( new PointCloudXYZI(size, 1));
 
     // for (int i = 0; i < size; i++)
@@ -858,6 +861,7 @@ void publish_visual_world_map(const ros::Publisher & pubVisualCloud)
     // mtx_buffer_pointcloud.unlock();
 }
 
+// change the current init method to sub_map_cur_frame_point
 void publish_visual_world_sub_map(const ros::Publisher & pubSubVisualCloud)
 {
     PointCloudXYZI::Ptr laserCloudFullRes(sub_map_cur_frame_point);
@@ -886,6 +890,7 @@ void publish_visual_world_sub_map(const ros::Publisher & pubSubVisualCloud)
     // mtx_buffer_pointcloud.unlock();
 }
 
+// process effect_feat_num as the processed number of point clouds.
 void publish_effect_world(const ros::Publisher & pubLaserCloudEffect)
 {
     PointCloudXYZI::Ptr laserCloudWorld( \
@@ -902,6 +907,7 @@ void publish_effect_world(const ros::Publisher & pubLaserCloudEffect)
     pubLaserCloudEffect.publish(laserCloudFullRes3);
 }
 
+// publish map to the topic.
 void publish_map(const ros::Publisher & pubLaserCloudMap)
 {
     sensor_msgs::PointCloud2 laserCloudMap;
@@ -911,6 +917,7 @@ void publish_map(const ros::Publisher & pubLaserCloudMap)
     pubLaserCloudMap.publish(laserCloudMap);
 }
 
+// template coding, set position(dim3) and orientation(dim4) to be current state position & current geometry quarternion.
 template<typename T>
 void set_posestamp(T & out)
 {
@@ -930,6 +937,7 @@ void set_posestamp(T & out)
     out.orientation.w = geoQuat.w;
 }
 
+// publish odometry as navigation message.(to be specific, use current pose to publish)
 void publish_odometry(const ros::Publisher & pubOdomAftMapped)
 {
     odomAftMapped.header.frame_id = "camera_init";
@@ -958,6 +966,7 @@ void publish_odometry(const ros::Publisher & pubOdomAftMapped)
     pubOdomAftMapped.publish(odomAftMapped);
 }
 
+// also used for ros message, just transmit the pose information.
 void publish_mavros(const ros::Publisher & mavros_pose_publisher)
 {
     msg_body_pose.header.stamp = ros::Time::now();
@@ -966,6 +975,7 @@ void publish_mavros(const ros::Publisher & mavros_pose_publisher)
     mavros_pose_publisher.publish(msg_body_pose);
 }
 
+// use msg_body_pose to compose a path vector, and publish the path vector to the ros.
 void publish_path(const ros::Publisher pubPath)
 {
     set_posestamp(msg_body_pose.pose);
@@ -1111,6 +1121,7 @@ void h_share_model(state_ikfom &s, esekfom::dyn_share_datastruct<double> &ekfom_
 }
 #endif         
 
+// read in avia.yaml config file.
 void readParameters(ros::NodeHandle &nh)
 {
     nh.param<int>("dense_map_enable",dense_map_en,1);
@@ -1156,17 +1167,17 @@ void readParameters(ros::NodeHandle &nh)
 
 int main(int argc, char** argv)
 {
-    ros::init(argc, argv, "laserMapping");
-    ros::NodeHandle nh;
-    image_transport::ImageTransport it(nh);
-    readParameters(nh);
-    pcl_wait_pub->clear();
-    ros::Subscriber sub_pcl = p_pre->lidar_type == AVIA ? \
+    ros::init(argc, argv, "laserMapping"); // init laserMapping module
+    ros::NodeHandle nh; // use node handler to control topic transmittance.
+    image_transport::ImageTransport it(nh); // image topic
+    readParameters(nh); // using function to get the parameters.
+    pcl_wait_pub->clear(); // make sure it is empty at the beginning.
+    ros::Subscriber sub_pcl = p_pre->lidar_type == AVIA ? \ // create a subscribr, if it is AVIA lidar, use livox_pcl_cbk as a callback function
         nh.subscribe(lid_topic, 200000, livox_pcl_cbk) : \
-        nh.subscribe(lid_topic, 200000, standard_pcl_cbk);
-    ros::Subscriber sub_imu = nh.subscribe(imu_topic, 200000, imu_cbk);
-    ros::Subscriber sub_img = nh.subscribe(img_topic, 200000, img_cbk);
-    image_transport::Publisher img_pub = it.advertise("/rgb_img", 1);
+        nh.subscribe(lid_topic, 200000, standard_pcl_cbk); // else use standard_pcl_cbk as a callback function, the difference is because the input type.
+    ros::Subscriber sub_imu = nh.subscribe(imu_topic, 200000, imu_cbk); // imu subscriber waiting for imu input
+    ros::Subscriber sub_img = nh.subscribe(img_topic, 200000, img_cbk); // image subscriber waiting for image input
+    image_transport::Publisher img_pub = it.advertise("/rgb_img", 1); // publish all the cloud output for rviz display
     ros::Publisher pubLaserCloudFullRes = nh.advertise<sensor_msgs::PointCloud2>
             ("/cloud_registered", 100);
     ros::Publisher pubVisualCloud = nh.advertise<sensor_msgs::PointCloud2>
@@ -1279,7 +1290,7 @@ int main(int argc, char** argv)
     {
         if (flg_exit) break;
         ros::spinOnce();
-        if(!sync_packages(LidarMeasures))
+        if(!sync_packages(LidarMeasures)) // test whether the input information has been synchronized.
         {
             status = ros::ok();
             cv::waitKey(1);
@@ -1299,14 +1310,14 @@ int main(int argc, char** argv)
         // double t0,t1,t2,t3,t4,t5,match_start, match_time, solve_start, solve_time, svd_time;
         double t0,t1,t2,t3,t4,t5,match_start, solve_start, svd_time;
 
-        match_time = kdtree_search_time = kdtree_search_counter = solve_time = solve_const_H_time = svd_time   = 0;
+        match_time = kdtree_search_time = kdtree_search_counter = solve_time = solve_const_H_time = svd_time = 0;
         t0 = omp_get_wtime();
         #ifdef USE_IKFOM
         p_imu->Process(LidarMeasures, kf, feats_undistort);
         state_point = kf.get_x();
         pos_lid = state_point.pos + state_point.rot * state_point.offset_T_L_I;
         #else
-        p_imu->Process2(LidarMeasures, state, feats_undistort); 
+        p_imu->Process2(LidarMeasures, state, feats_undistort); // process lidar measurement for imu to get undistort point cloud
         state_propagat = state;
         #endif
 
@@ -1337,16 +1348,16 @@ int main(int argc, char** argv)
 
         if (! LidarMeasures.is_lidar_end) 
         {
-            cout<<"[ VIO ]: Raw feature num: "<<pcl_wait_pub->points.size() << "." << endl;
+            cout<<"[ VIO ]: Raw feature num: "<<pcl_wait_pub->points.size() << "." << endl; // vio added raw feature number
             if (first_lidar_time<10)
             {
                 continue;
             }
             // cout<<"cur state:"<<state.rot_end<<endl;
             if (img_en) {
-                euler_cur = RotMtoEuler(state.rot_end);
+                euler_cur = RotMtoEuler(state.rot_end); // use so3 math to transform current rotatiion matrix(M3D) to space(V3D)
                 fout_pre << setw(20) << LidarMeasures.last_update_time - first_lidar_time << " " << euler_cur.transpose()*57.3 << " " << state.pos_end.transpose() << " " << state.vel_end.transpose() \
-                                <<" "<<state.bias_g.transpose()<<" "<<state.bias_a.transpose()<<" "<<state.gravity.transpose()<< endl;
+                                <<" "<<state.bias_g.transpose()<<" "<<state.bias_a.transpose()<<" "<<state.gravity.transpose()<< endl; // output for debug
                 
                 // lidar_selector->detect(LidarMeasures.measures.back().img, feats_undistort);
                 // mtx_buffer_pointcloud.lock();
@@ -1360,12 +1371,12 @@ int main(int argc, char** argv)
                 //                         &laserCloudWorld->points[i]);
                 // }
 
-                lidar_selector->detect(LidarMeasures.measures.back().img, pcl_wait_pub);
+                lidar_selector->detect(LidarMeasures.measures.back().img, pcl_wait_pub); // do the VIO detection.
                 // int size = lidar_selector->map_cur_frame_.size();
-                int size_sub = lidar_selector->sub_map_cur_frame_.size();
+                int size_sub = lidar_selector->sub_map_cur_frame_.size(); // sub_map_cur_frame_'s point number.
                 
                 // map_cur_frame_point->clear();
-                sub_map_cur_frame_point->clear();
+                sub_map_cur_frame_point->clear(); // clear away current sub map point. Ensure it is clean.
                 // for(int i=0; i<size; i++)
                 // {
                 //     PointType temp_map;
@@ -1375,6 +1386,7 @@ int main(int argc, char** argv)
                 //     temp_map.intensity = 0.;
                 //     map_cur_frame_point->push_back(temp_map);
                 // }
+                // flash lidar_selector's sub_map_cur_frame_'s points to sub_map_cur_frame_point
                 for(int i=0; i<size_sub; i++)
                 {
                     PointType temp_map;
@@ -1384,16 +1396,16 @@ int main(int argc, char** argv)
                     temp_map.intensity = 0.;
                     sub_map_cur_frame_point->push_back(temp_map);
                 }
-                cv::Mat img_rgb = lidar_selector->img_cp;
-                cv_bridge::CvImage out_msg;
+                cv::Mat img_rgb = lidar_selector->img_cp; // get image from lidar_selector.
+                cv_bridge::CvImage out_msg; // create a out_msg for image publication.
                 out_msg.header.stamp = ros::Time::now();
                 // out_msg.header.frame_id = "camera_init";
                 out_msg.encoding = sensor_msgs::image_encodings::BGR8;
                 out_msg.image = img_rgb;
-                img_pub.publish(out_msg.toImageMsg());
+                img_pub.publish(out_msg.toImageMsg()); // publish current image.
 
-                if(img_en) publish_frame_world_rgb(pubLaserCloudFullRes, lidar_selector);
-                publish_visual_world_sub_map(pubSubVisualCloud);
+                if(img_en) publish_frame_world_rgb(pubLaserCloudFullRes, lidar_selector); // publish rgb frame point cloud
+                publish_visual_world_sub_map(pubSubVisualCloud); // publish visual world sub map via pubSubVisualCloud publisher.
                 
                 // *map_cur_frame_point = *pcl_wait_pub;
                 // mtx_buffer_pointcloud.unlock();
@@ -1431,11 +1443,11 @@ int main(int argc, char** argv)
             if(feats_down_body->points.size() > 5)
             {
                 ikdtree.set_downsample_param(filter_size_map_min);
-                ikdtree.Build(feats_down_body->points);
+                ikdtree.Build(feats_down_body->points); // ikdtree building.
             }
             continue;
         }
-        int featsFromMapNum = ikdtree.size();
+        int featsFromMapNum = ikdtree.size(); // building finished, get the size of ikdtree.
         #endif
     #else
         if(featsFromMap->points.empty())
@@ -1450,18 +1462,18 @@ int main(int argc, char** argv)
         int featsFromMapNum = featsFromMap->points.size();
     #endif
         feats_down_size = feats_down_body->points.size();
-        cout<<"[ LIO ]: Raw feature num: "<<feats_undistort->points.size()<<" downsamp num "<<feats_down_size<<" Map num: "<<featsFromMapNum<< "." << endl;
+        cout<<"[ LIO ]: Raw feature num: "<<feats_undistort->points.size()<<" downsamp num "<<feats_down_size<<" Map num: "<<featsFromMapNum<< "." << endl; // LIO undistortion procedure added mapping point number.
 
         /*** ICP and iterated Kalman filter update ***/
-        normvec->resize(feats_down_size);
-        feats_down_world->resize(feats_down_size);
+        normvec->resize(feats_down_size); // reserve space for feats_down_size's points.
+        feats_down_world->resize(feats_down_size); // reserve space as well.
         //vector<double> res_last(feats_down_size, 1000.0); // initial //
-        res_last.resize(feats_down_size, 1000.0);
+        res_last.resize(feats_down_size, 1000.0); // reserve res_last, and init every slots to be 1000.0
         
-        t1 = omp_get_wtime();
+        t1 = omp_get_wtime(); // OpenMP high accuracy time measurement.
         if (lidar_en)
         {
-            euler_cur = RotMtoEuler(state.rot_end);
+            euler_cur = RotMtoEuler(state.rot_end); // refresh euler_cur to current state transformation
             #ifdef USE_IKFOM
             //state_ikfom fout_state = kf.get_x();
             fout_pre << setw(20) << LidarMeasures.last_update_time - first_lidar_time << " " << euler_cur.transpose()*57.3 << " " << state_point.pos.transpose() << " " << state_point.vel.transpose() \
@@ -1484,13 +1496,13 @@ int main(int argc, char** argv)
         kdtreeSurfFromMap->setInputCloud(featsFromMap);
     #endif
 
-        point_selected_surf.resize(feats_down_size, true);
-        pointSearchInd_surf.resize(feats_down_size);
-        Nearest_Points.resize(feats_down_size);
-        int  rematch_num = 0;
-        bool nearest_search_en = true; //
+        point_selected_surf.resize(feats_down_size, true); // a bool vector, needed to be resized to be true, and reserve space to feats_down_size
+        pointSearchInd_surf.resize(feats_down_size); // a vector of vector<int>, resize it to be feats_down_size
+        Nearest_Points.resize(feats_down_size); // a vector of PointVector, resize this to be feats_down_size.
+        int  rematch_num = 0; // initialize rematch number to be 0
+        bool nearest_search_en = true; // initialize nearest_search_en to be true for nearest searching.
 
-        t2 = omp_get_wtime();
+        t2 = omp_get_wtime(); // get t2
         
         /*** iterated state estimation ***/
         #ifdef MP_EN
@@ -1514,21 +1526,21 @@ int main(int argc, char** argv)
 
         if(img_en)
         {
-            omp_set_num_threads(MP_PROC_NUM);
+            omp_set_num_threads(MP_PROC_NUM); // set thread number.
             #pragma omp parallel for
-            for(int i=0;i<1;i++) {}
+            for(int i=0;i<1;i++) {} // just a test, no use.
         }
 
         if(lidar_en)
         {
             for (iterCount = -1; iterCount < NUM_MAX_ITERATIONS && flg_EKF_inited; iterCount++) 
             {
-                match_start = omp_get_wtime();
-                PointCloudXYZI ().swap(*laserCloudOri);
-                PointCloudXYZI ().swap(*corr_normvect);
+                match_start = omp_get_wtime(); // record start matching time
+                PointCloudXYZI ().swap(*laserCloudOri); // clear away data in laserCloudOri, clear laserCloudOri to empty point cloud.
+                PointCloudXYZI ().swap(*corr_normvect); // the same operation, make corr_normvect point to a PointCloudXYZI object with 0 points insdie.
                 // laserCloudOri->clear(); 
                 // corr_normvect->clear(); 
-                total_residual = 0.0; 
+                total_residual = 0.0; // initialize total_residual to be 0.0 at the start of the iteration
 
                 /** closest surface search and residual computation **/
                 #ifdef MP_EN
@@ -1536,41 +1548,42 @@ int main(int argc, char** argv)
                     #pragma omp parallel for
                 #endif
                 // normvec->resize(feats_down_size);
-                for (int i = 0; i < feats_down_size; i++)
+                for (int i = 0; i < feats_down_size; i++) // if openMP is enabled here, the processing of each points can be at the same time on different processors.
                 {
-                    PointType &point_body  = feats_down_body->points[i];
-                    PointType &point_world = feats_down_world->points[i];
-                    V3D p_body(point_body.x, point_body.y, point_body.z);
+                    PointType &point_body  = feats_down_body->points[i]; // get current point under imu coordinate ptr
+                    PointType &point_world = feats_down_world->points[i]; // get current point under world coordinate ptr
+                    V3D p_body(point_body.x, point_body.y, point_body.z); // create a new p_body for current point.
                     /* transform to world frame */
-                    pointBodyToWorld(&point_body, &point_world);
-                    vector<float> pointSearchSqDis(NUM_MATCH_POINTS);
+                    pointBodyToWorld(&point_body, &point_world); // assign point_world(output) with the transformation from point_body(input)
+                    vector<float> pointSearchSqDis(NUM_MATCH_POINTS); // create a vector named pointSearchSqDis with NUM_MATCH_POINTS(5) slots.
                     #ifdef USE_ikdtree
-                        auto &points_near = Nearest_Points[i];
+                        auto &points_near = Nearest_Points[i]; // for each points, get the PointVector to store its nearest points as neighborhood.
                     #else
                         auto &points_near = pointSearchInd_surf[i];
                     #endif
-                    uint8_t search_flag = 0;  
-                    double search_start = omp_get_wtime();
-                    if (nearest_search_en)
+                    uint8_t search_flag = 0; // initialization, set search_flag to be 0 at first.
+                    double search_start = omp_get_wtime(); // get start searching time for benchmarking.
+                    if (nearest_search_en) // if nearest_search_en is switched on.
                     {
                         /** Find the closest surfaces in the map **/
                         #ifdef USE_ikdtree
                             #ifdef USE_ikdforest
                                 search_flag = ikdforest.Nearest_Search(point_world, NUM_MATCH_POINTS, points_near, pointSearchSqDis, first_lidar_time, 5);
                             #else
-                                ikdtree.Nearest_Search(point_world, NUM_MATCH_POINTS, points_near, pointSearchSqDis);
+                                ikdtree.Nearest_Search(point_world, NUM_MATCH_POINTS, points_near, pointSearchSqDis); // searching for nearest using ikdtree searching.
+                                // get nearest 5 points' information
                             #endif
                         #else
                             kdtreeSurfFromMap->nearestKSearch(point_world, NUM_MATCH_POINTS, points_near, pointSearchSqDis);
                         #endif
 
-                        point_selected_surf[i] = pointSearchSqDis[NUM_MATCH_POINTS - 1] > 5 ? false : true;
+                        point_selected_surf[i] = pointSearchSqDis[NUM_MATCH_POINTS - 1] > 5 ? false : true; // if minimum distance is bigger than 5, the point is too far, can't be sure to add a surface selected.
 
                         #ifdef USE_ikdforest
                             point_selected_surf[i] = point_selected_surf[i] && (search_flag == 0);
                         #endif
-                        kdtree_search_time += omp_get_wtime() - search_start;
-                        kdtree_search_counter ++;                        
+                        kdtree_search_time += omp_get_wtime() - search_start; // refresh kdtree_search_time.
+                        kdtree_search_counter ++; // add search counter for further check          
                     }
 
 
@@ -1582,16 +1595,19 @@ int main(int argc, char** argv)
                     //     printf("\nERROR: Return Points is less than 5\n\n");
                     //     printf("Target Point is: (%0.3f,%0.3f,%0.3f)\n",point_world.x,point_world.y,point_world.z);
                     // }
-                    if (!point_selected_surf[i] || points_near.size() < NUM_MATCH_POINTS) continue;
+                    if (!point_selected_surf[i] || points_near.size() < NUM_MATCH_POINTS) continue; // the nearest points are too far away, or nearest points is not enough, less than 5, just continue for next point.
 
-                    VF(4) pabcd;
-                    point_selected_surf[i] = false;
-                    if (esti_plane(pabcd, points_near, 0.1f)) //(planeValid)
+                    VF(4) pabcd; // get the argument of the plane, a, b, c, d respectively. (ax + by + cz + d = 0)
+                    point_selected_surf[i] = false; // set the point_selected_surf to false manually
+                    if (esti_plane(pabcd, points_near, 0.1f)) // (planeValid)
                     {
-                        float pd2 = pabcd(0) * point_world.x + pabcd(1) * point_world.y + pabcd(2) * point_world.z + pabcd(3);
-                        float s = 1 - 0.9 * fabs(pd2) / sqrt(p_body.norm());
+                        float pd2 = pabcd(0) * point_world.x + pabcd(1) * point_world.y + pabcd(2) * point_world.z + pabcd(3); // plane approximation bias
+                        float s = 1 - 0.9 * fabs(pd2) / sqrt(p_body.norm()); 
+                        // here the reason we use the p_body to calculate norm is that the transformation calculation might bring some rounding errors
+                        // and according to maths, the length of p_body should be exactly equal to point_world's length.
 
-                        if (s > 0.9)
+                        if (s > 0.9) // the confidence interval is met, thus the plane is effective.
+                        // then we get current point's approximation normvec to do the matching.
                         {
                             point_selected_surf[i] = true;
                             normvec->points[i].x = pabcd(0);

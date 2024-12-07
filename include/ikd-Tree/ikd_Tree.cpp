@@ -347,34 +347,50 @@ void KD_TREE::Build(PointVector point_cloud){
     Root_Node = STATIC_ROOT_NODE->left_son_ptr;    
 }
 
+// ikdtree's nearest searching
+// arguments:
+//     PointType      point          -> world coordinate point, central point to be searched
+//     int            k_nearest      -> number of nearest points need to be searched
+//     PointVector&   Nearest_Points -> a vector reference for Nearest_Points input to be filled
+//     vector<float>& Point_Distance -> a float vector to get the cooresponding distance of each matched points in Nearest_Points vector
+//     double         max_dist       -> maximum distance of this nearest point searching
+// return types:
+//     void
 void KD_TREE::Nearest_Search(PointType point, int k_nearest, PointVector& Nearest_Points, vector<float> & Point_Distance, double max_dist){   
-    MANUAL_HEAP q(2*k_nearest);
-    q.clear();
-    vector<float> ().swap(Point_Distance);
+    MANUAL_HEAP q(2*k_nearest); // create a heap data structure for quick storage and searching, with the maximum capacity as 2*k_nearest.
+    q.clear(); // clear the heap
+    vector<float> ().swap(Point_Distance); // quickly flash Point_Distance to zero capacity.
     if (Rebuild_Ptr == nullptr || *Rebuild_Ptr != Root_Node){
-        Search(Root_Node, k_nearest, point, q, max_dist);
-    } else {
-        pthread_mutex_lock(&search_flag_mutex);
-        while (search_mutex_counter == -1)
+        Search(Root_Node, k_nearest, point, q, max_dist); // if no need to Rebuild, just search from Root_Node. No conflict.
+    } else { // else, aquire mutex to lock current ikdtree for searching. Some other process may doing the rebuilding, thus need to do thread synchronization.
+        pthread_mutex_lock(&search_flag_mutex); // aquire the search flag to enable only one thread do the searching process.
+        while (search_mutex_counter == -1) // being written, actually a spin lock
+        // rebuild is enabled (condition: Rebuild_Ptr != nullptr && *Rebuild_Ptr == Root_Node), 
+        // the ikdtree need to do whole adjustment, thus lots of writing will happen here.
+        // search_mutex_counter < 0 -> the tree is being written by other rebuilding process.
+        // search_mutex_counter >= 0 -> the tree is being reading by search_mutex_counter searching processes.
+        // as the Root_Node is being adjusted, we have to wait for the completion of rebuilding process.
         {
-            pthread_mutex_unlock(&search_flag_mutex);
-            usleep(1);
-            pthread_mutex_lock(&search_flag_mutex);
+            pthread_mutex_unlock(&search_flag_mutex); // release the outer searching mutex, enable outer process to proceed with the search_mutex_counter update.
+            usleep(1); // waiting...
+            pthread_mutex_lock(&search_flag_mutex); // aquire the lock again to do the testing.
         }
-        search_mutex_counter += 1;
-        pthread_mutex_unlock(&search_flag_mutex);  
-        Search(Root_Node, k_nearest, point, q, max_dist);  
-        pthread_mutex_lock(&search_flag_mutex);
-        search_mutex_counter -= 1;
-        pthread_mutex_unlock(&search_flag_mutex);      
+        // now the rebuild update has been done, and the process has aquired the searching mutex.
+        search_mutex_counter += 1; // aquired success, indicate the searching process is doing the reading.
+        pthread_mutex_unlock(&search_flag_mutex); // unlock mutex to enable searching. For reading, no need to hold the lock.
+        Search(Root_Node, k_nearest, point, q, max_dist); // now mutex aquired, do the searching. Read-only access, no need to hold mutex.
+        pthread_mutex_lock(&search_flag_mutex); // need to modify search_mutex_counter, thus need mutex
+        search_mutex_counter -= 1; // critical session, do the update for search_mutex_counter, now the searching has been completed, thus the number of search_mutex_counter minus 1.
+        pthread_mutex_unlock(&search_flag_mutex); // release mutex, critical session over.
     }
-    int k_found = min(k_nearest,int(q.size()));
-    PointVector ().swap(Nearest_Points);
-    vector<float> ().swap(Point_Distance);
+    int k_found = min(k_nearest,int(q.size())); // get the found number, the heap might adjust dynamically for initialization with very small number of points.
+    PointVector ().swap(Nearest_Points); // flash the Nearest_Points as an empty PointVector.
+    vector<float> ().swap(Point_Distance); // flash the Point_Distance as an empty distance vector.
     for (int i=0;i < k_found;i++){
-        Nearest_Points.insert(Nearest_Points.begin(), q.top().point);
+        // use head insertion to speed up vector refreshment.
+        Nearest_Points.insert(Nearest_Points.begin(), q.top().point); // each time, get the first element from heap
         Point_Distance.insert(Point_Distance.begin(), q.top().dist);
-        q.pop();
+        q.pop(); // refresh heap
     }
     return;
 }
